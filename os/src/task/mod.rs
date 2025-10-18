@@ -16,6 +16,7 @@ mod task;
 
 use crate::config::MAX_APP_NUM;
 use crate::loader::{get_num_app, init_app_cx};
+use crate::model::map::ArrayMap;
 use crate::sync::UPSafeCell;
 use lazy_static::*;
 use switch::__switch;
@@ -45,6 +46,8 @@ pub struct TaskManagerInner {
     tasks: [TaskControlBlock; MAX_APP_NUM],
     /// id of current `Running` task
     current_task: usize,
+    /// syscall count
+    syscall_count: [ArrayMap<usize, usize>; MAX_APP_NUM],
 }
 
 lazy_static! {
@@ -65,6 +68,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    syscall_count: [ArrayMap::new(); MAX_APP_NUM],
                 })
             },
         }
@@ -156,6 +160,33 @@ fn mark_current_suspended() {
 /// Change the status of current `Running` task into `Exited`.
 fn mark_current_exited() {
     TASK_MANAGER.mark_current_exited();
+}
+
+/// Get current task id.
+pub fn get_current_task_id() -> usize {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    inner.current_task
+}
+
+/// Get the syscall count for a given task and syscall id.
+pub fn get_syscall_count(task_id: usize, syscall_id: usize) -> usize {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    if let Some(count) = inner.syscall_count[task_id].get(&syscall_id) {
+        *count
+    } else {
+        0
+    }
+}
+
+/// Increments the syscall count for a given task and syscall id.
+pub fn increment_syscall_count(task_id: usize, syscall_id: usize) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let count = if let Some(count) = inner.syscall_count[task_id].get(&syscall_id) {
+        *count + 1
+    } else {
+        1
+    };
+    inner.syscall_count[task_id].insert(syscall_id, count);
 }
 
 /// Suspend the current 'Running' task and run the next task in task list.

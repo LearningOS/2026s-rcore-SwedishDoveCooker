@@ -34,6 +34,7 @@ mod heap_alloc;
 pub mod lang_items;
 mod loader;
 pub mod logging;
+pub mod model;
 pub mod sbi;
 pub mod sync;
 pub mod syscall;
