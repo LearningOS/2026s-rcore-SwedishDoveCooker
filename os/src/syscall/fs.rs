@@ -11,7 +11,10 @@ pub fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
     match fd {
         FD_STDOUT => {
             let buffers = translated_byte_buffer(current_user_token(), buf, len);
-            for buffer in buffers {
+            if buffers.is_none() {
+                panic!("sys_write: invalid buffer!");
+            }
+            for buffer in buffers.unwrap() {
                 print!("{}", core::str::from_utf8(buffer).unwrap());
             }
             len as isize

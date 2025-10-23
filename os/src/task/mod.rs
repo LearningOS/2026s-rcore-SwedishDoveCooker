@@ -15,8 +15,10 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::MapPermission;
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
+use alloc::vec;
 use alloc::vec::Vec;
 use lazy_static::*;
 use switch::__switch;
@@ -46,6 +48,8 @@ struct TaskManagerInner {
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+    /// syscall count for each task
+    syscall_count: Vec<alloc::collections::BTreeMap<usize, usize>>,
 }
 
 lazy_static! {
@@ -64,6 +68,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    syscall_count: vec![alloc::collections::BTreeMap::new(); num_app],
                 })
             },
         }
@@ -201,4 +206,55 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Allocate memory for a task with the given vpn range and permissions.
+pub fn alloc(task_id: usize, start_va: usize, end_va: usize, perm: MapPermission) -> isize {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let memory_set = &mut inner.tasks[task_id].memory_set;
+    let result = memory_set.insert_framed_area(start_va.into(), end_va.into(), perm);
+    if result.is_ok() {
+        0
+    } else {
+        -1
+    }
+}
+
+/// Deallocate memory for a task with the given start virtual address and length.
+pub fn dealloc(task_id: usize, start_va: usize, len: usize) -> isize {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let memory_set = &mut inner.tasks[task_id].memory_set;
+    let result = memory_set.shrink_from(start_va.into(), (start_va + len).into());
+    if result.is_ok() {
+        0
+    } else {
+        -1
+    }
+}
+
+/// Get current task id.
+pub fn get_current_task_id() -> usize {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    inner.current_task
+}
+
+/// Get the syscall count for a given task and syscall id.
+pub fn get_syscall_count(task_id: usize, syscall_id: usize) -> usize {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    if let Some(count) = inner.syscall_count[task_id].get(&syscall_id) {
+        *count
+    } else {
+        0
+    }
+}
+
+/// Increments the syscall count for a given task and syscall id.
+pub fn increment_syscall_count(task_id: usize, syscall_id: usize) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let count = if let Some(count) = inner.syscall_count[task_id].get(&syscall_id) {
+        *count + 1
+    } else {
+        1
+    };
+    inner.syscall_count[task_id].insert(syscall_id, count);
 }

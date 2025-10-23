@@ -50,11 +50,12 @@ impl TaskControlBlock {
         let task_status = TaskStatus::Ready;
         // map a kernel-stack in kernel space
         let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(app_id);
-        KERNEL_SPACE.exclusive_access().insert_framed_area(
+        let result = KERNEL_SPACE.exclusive_access().insert_framed_area(
             kernel_stack_bottom.into(),
             kernel_stack_top.into(),
             MapPermission::R | MapPermission::W,
         );
+        assert!(result.is_ok());
         let task_control_block = Self {
             task_status,
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
@@ -89,7 +90,7 @@ impl TaskControlBlock {
             self.memory_set
                 .append_to(VirtAddr(self.heap_bottom), VirtAddr(new_brk as usize))
         };
-        if result {
+        if result.is_ok() {
             self.program_brk = new_brk as usize;
             Some(old_break)
         } else {
