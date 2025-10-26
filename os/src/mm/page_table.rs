@@ -99,7 +99,10 @@ impl PageTable {
                 break;
             }
             if !pte.is_valid() {
-                let frame = frame_alloc().unwrap();
+                let frame = match frame_alloc() {
+                    Some(f) => f,
+                    None => return None,
+                };
                 *pte = PageTableEntry::new(frame.ppn, PTEFlags::V);
                 self.frames.push(frame);
             }
@@ -127,10 +130,16 @@ impl PageTable {
     }
     /// set the map between virtual page number and physical page number
     #[allow(unused)]
-    pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
-        let pte = self.find_pte_create(vpn).unwrap();
-        assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
-        *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
+    pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) -> Result<(), ()> {
+        if let Some(pte) = self.find_pte_create(vpn) {
+            if pte.is_valid() {
+                return Err(());
+            }
+            *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
+            Ok(())
+        } else {
+            Err(())
+        }
     }
     /// remove the map between virtual page number and physical page number
     #[allow(unused)]
@@ -161,7 +170,11 @@ impl PageTable {
 }
 
 /// Translate&Copy a ptr[u8] array with LENGTH len to a mutable u8 Vec through page table
-pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&'static mut [u8]> {
+pub fn translated_byte_buffer(
+    token: usize,
+    ptr: *const u8,
+    len: usize,
+) -> Option<Vec<&'static mut [u8]>> {
     let page_table = PageTable::from_token(token);
     let mut start = ptr as usize;
     let end = start + len;
@@ -169,18 +182,28 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
     while start < end {
         let start_va = VirtAddr::from(start);
         let mut vpn = start_va.floor();
-        let ppn = page_table.translate(vpn).unwrap().ppn();
-        vpn.step();
-        let mut end_va: VirtAddr = vpn.into();
-        end_va = end_va.min(VirtAddr::from(end));
-        if end_va.page_offset() == 0 {
-            v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..]);
+        if let Some(pte) = page_table.translate(vpn) {
+            if !pte.is_valid() || !pte.readable() {
+                return None;
+            }
+            let ppn = pte.ppn();
+            vpn.step();
+            let mut end_va: VirtAddr = vpn.into();
+            if end_va.0 == 1 << 39 {
+                return None;
+            }
+            end_va = end_va.min(VirtAddr::from(end));
+            if end_va.page_offset() == 0 {
+                v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..]);
+            } else {
+                v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..end_va.page_offset()]);
+            }
+            start = end_va.into();
         } else {
-            v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..end_va.page_offset()]);
+            return None;
         }
-        start = end_va.into();
     }
-    v
+    Some(v)
 }
 
 /// Translate&Copy a ptr[u8] array end with `\0` to a `String` Vec through page table
@@ -213,3 +236,56 @@ pub fn translated_refmut<T>(token: usize, ptr: *mut T) -> &'static mut T {
         .unwrap()
         .get_mut()
 }
+
+/// write
+pub fn write_user_buffer(token: usize, ptr: *mut u8, data: &[u8]) -> Result<(), ()> {
+    let mut buffers = translated_byte_buffer(token, ptr, data.len());
+    if buffers.is_none() {
+        panic!("sys_read: invalid buffer!");
+    }
+    let buffers = buffers.as_mut().unwrap();
+    let mut data_start = 0;
+    for buffer in buffers {
+        let len = buffer.len();
+        buffer.copy_from_slice(&data[data_start..data_start + len]);
+        data_start += len;
+    }
+    Ok(())
+}
+
+// /// Write data to the given user space pointer through page table
+// pub fn write_user_buffer(token: usize, ptr: *mut u8, data: &[u8]) -> Result<(), ()> {
+//     let page_table = PageTable::from_token(token);
+//     let mut start = ptr as usize;
+//     let end = start + data.len();
+//     let mut data_start = 0;
+//     while start < end {
+//         let start_va = VirtAddr::from(start);
+//         let mut vpn = start_va.floor();
+//         // let ppn = page_table.translate(vpn).unwrap().ppn();
+//         if let Some(pte) = page_table.translate(vpn) {
+//             if !pte.is_valid() || !pte.writable() {
+//                 return Err(());
+//             }
+//             let ppn = pte.ppn();
+//             vpn.step();
+//             let mut end_va: VirtAddr = vpn.into();
+//             end_va = end_va.min(VirtAddr::from(end));
+//             if end_va.page_offset() == 0 {
+//                 let len = ppn.get_bytes_array().len() - start_va.page_offset();
+//                 ppn.get_bytes_array()[start_va.page_offset()..]
+//                     .copy_from_slice(&data[data_start..data_start + len]);
+//                 data_start += len;
+//             } else {
+//                 let len = end_va.page_offset() - start_va.page_offset();
+//                 ppn.get_bytes_array()[start_va.page_offset()..end_va.page_offset()]
+//                     .copy_from_slice(&data[data_start..data_start + len]);
+//                 data_start += len;
+//             }
+//             start = end_va.into();
+//         } else {
+//             return Err(());
+//         }
+//     }
+//     Ok(())
+// }

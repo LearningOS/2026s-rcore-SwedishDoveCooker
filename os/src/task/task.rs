@@ -229,7 +229,7 @@ impl TaskControlBlock {
                 .memory_set
                 .append_to(VirtAddr(heap_bottom), VirtAddr(new_brk as usize))
         };
-        if result {
+        if result.is_ok() {
             inner.program_brk = new_brk as usize;
             Some(old_break)
         } else {
