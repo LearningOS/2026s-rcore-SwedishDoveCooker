@@ -177,7 +177,16 @@ pub fn sys_spawn(_path: *const u8) -> isize {
         "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    // sys_fork();
+    // sys_exec(_path)
+    let current_task = current_task().unwrap();
+    let new_task = current_task
+        .spawn(get_app_data_by_name(&translated_str(current_user_token(), _path)).unwrap());
+    let new_pid = new_task.pid.0;
+    // let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
+    // trap_cx.x[10] = 0;
+    add_task(new_task);
+    new_pid as isize
 }
 
 // YOUR JOB: Set task priority.
