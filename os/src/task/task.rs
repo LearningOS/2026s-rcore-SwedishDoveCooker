@@ -71,6 +71,13 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Stride for stride scheduling
+    /// nin不是要很大吗(
+    pub stride: u128,
+
+    /// Process priority
+    pub priority: usize,
 }
 
 impl TaskControlBlockInner {
@@ -135,6 +142,8 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    stride: 0,
+                    priority: 16,
                 })
             },
         };
@@ -216,6 +225,8 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    stride: 0,
+                    priority: 16,
                 })
             },
         });
@@ -229,6 +240,20 @@ impl TaskControlBlock {
         task_control_block
         // **** release child PCB
         // ---- release parent PCB
+    }
+
+    /// spawn a new process as child process
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let new_task = Arc::new(TaskControlBlock::new(elf_data));
+
+        let mut new_task_inner = new_task.inner_exclusive_access();
+        new_task_inner.parent = Some(Arc::downgrade(self));
+        drop(new_task_inner);
+        self.inner_exclusive_access()
+            .children
+            .push(new_task.clone());
+
+        new_task
     }
 
     /// get pid of process
@@ -254,7 +279,7 @@ impl TaskControlBlock {
                 .memory_set
                 .append_to(VirtAddr(heap_bottom), VirtAddr(new_brk as usize))
         };
-        if result {
+        if result.is_ok() {
             inner.program_brk = new_brk as usize;
             Some(old_break)
         } else {

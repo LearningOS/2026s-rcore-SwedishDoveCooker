@@ -4,11 +4,12 @@ use alloc::sync::Arc;
 
 use crate::{
     fs::{open_file, OpenFlags},
-    mm::{translated_refmut, translated_str},
+    mm::{translated_refmut, translated_str, write_user_buffer, MapPermission},
     task::{
-        add_task, current_task, current_user_token, exit_current_and_run_next,
+        add_task, alloc_ba, current_task, current_user_token, dealloc, exit_current_and_run_next,
         suspend_current_and_run_next,
     },
+    timer::get_time_us,
 };
 
 #[repr(C)]
@@ -110,7 +111,19 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
         "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let us = get_time_us();
+    unsafe {
+        let _ = write_user_buffer(
+            current_user_token(),
+            _ts as *mut u8,
+            // 你就说能不能用嘛()
+            &mut core::mem::transmute::<TimeVal, [u8; core::mem::size_of::<TimeVal>()]>(TimeVal {
+                sec: us / 1_000_000,
+                usec: us % 1_000_000,
+            }),
+        );
+    }
+    0
 }
 
 /// YOUR JOB: Implement mmap.
@@ -119,7 +132,16 @@ pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
         "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if _port & !0x7 != 0 || _port & 0x7 == 0 || _start & 0xfff != 0 {
+        return -1;
+    }
+    // println!("{}", (_port << 1 | 0x10) as u8);
+    return alloc_ba(
+        current_task().unwrap(),
+        _start,
+        _start + _len,
+        MapPermission::from_bits_truncate((_port << 1 | 0x10) as u8),
+    );
 }
 
 /// YOUR JOB: Implement munmap.
@@ -128,7 +150,10 @@ pub fn sys_munmap(_start: usize, _len: usize) -> isize {
         "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if _start & 0xfff != 0 {
+        return -1;
+    }
+    return dealloc(current_task().unwrap(), _start, _len);
 }
 
 /// change data segment size
@@ -148,7 +173,21 @@ pub fn sys_spawn(_path: *const u8) -> isize {
         "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let current_task = current_task().unwrap();
+    // let new_task = current_task
+    //     .spawn(get_app_data_by_name(&translated_str(current_user_token(), _path)).unwrap());
+    if let Some(app_inode) = open_file(
+        &translated_str(current_user_token(), _path),
+        OpenFlags::RDONLY,
+    ) {
+        let all_data = app_inode.read_all();
+        let new_task = current_task.spawn(all_data.as_slice());
+        let new_pid = new_task.pid.0;
+        add_task(new_task);
+        new_pid as isize
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
@@ -157,5 +196,12 @@ pub fn sys_set_priority(_prio: isize) -> isize {
         "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let current_task = current_task().unwrap();
+    let mut inner = current_task.inner_exclusive_access();
+    if _prio < 2 || _prio as u128 > 11451419198101145141919810 {
+        return -1;
+    }
+    inner.priority = _prio as usize;
+    drop(inner);
+    _prio
 }
