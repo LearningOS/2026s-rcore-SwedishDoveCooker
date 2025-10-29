@@ -1,5 +1,5 @@
 //! File and filesystem-related syscalls
-use crate::fs::{open_file, OpenFlags, Stat};
+use crate::fs::{link_file, open_file, unlink_file, OpenFlags, Stat};
 use crate::mm::{translated_byte_buffer, translated_str, UserBuffer};
 use crate::task::{current_task, current_user_token};
 
@@ -85,7 +85,30 @@ pub fn sys_fstat(_fd: usize, _st: *mut Stat) -> isize {
         "kernel:pid[{}] sys_fstat NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let token = current_user_token();
+    let task = current_task().unwrap();
+    let inner = task.inner_exclusive_access();
+    if _fd >= inner.fd_table.len() {
+        return -1;
+    }
+    if let Some(file) = &inner.fd_table[_fd] {
+        // 喜欢特征对象的小朋友你们好啊(
+        // let file =
+        //     unsafe { core::mem::transmute::<Arc<dyn File + Send + Sync>, OSInode>(file.clone()) };
+        let file = file.clone();
+        drop(inner);
+        let stat = file.stat();
+        let mut st_buf_vec =
+            translated_byte_buffer(token, _st as *const u8, core::mem::size_of::<Stat>()).unwrap();
+
+        let st_slice_u8 = &mut st_buf_vec[0];
+        let st_ptr_mut = st_slice_u8.as_mut_ptr() as *mut Stat;
+        let st_slice_stat = unsafe { core::slice::from_raw_parts_mut(st_ptr_mut, 1) };
+        st_slice_stat[0] = stat;
+        0
+    } else {
+        -1
+    }
 }
 
 /// YOUR JOB: Implement linkat.
@@ -94,7 +117,13 @@ pub fn sys_linkat(_old_name: *const u8, _new_name: *const u8) -> isize {
         "kernel:pid[{}] sys_linkat NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let token = current_user_token();
+    let old_name = translated_str(token, _old_name);
+    let new_name = translated_str(token, _new_name);
+    if old_name.is_empty() || new_name.is_empty() || old_name == new_name {
+        return -1;
+    }
+    link_file(&old_name, &new_name)
 }
 
 /// YOUR JOB: Implement unlinkat.
@@ -103,5 +132,10 @@ pub fn sys_unlinkat(_name: *const u8) -> isize {
         "kernel:pid[{}] sys_unlinkat NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    let token = current_user_token();
+    let name = translated_str(token, _name);
+    if name.is_empty() {
+        return -1;
+    }
+    unlink_file(&name) as isize
 }
