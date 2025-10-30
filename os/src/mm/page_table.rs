@@ -217,6 +217,19 @@ pub fn translated_refmut<T>(token: usize, ptr: *mut T) -> &'static mut T {
         .get_mut()
 }
 
+/// write
+/// 阉割版 因为不需要再alloc了 希望可以直接用
+pub fn write_user_buffer(token: usize, ptr: *mut u8, data: &[u8]) -> Result<(), ()> {
+    let buffers = translated_byte_buffer(token, ptr, data.len());
+    let mut data_start = 0;
+    for buffer in buffers {
+        let len = buffer.len();
+        buffer.copy_from_slice(&data[data_start..data_start + len]);
+        data_start += len;
+    }
+    Ok(())
+}
+
 /// An abstraction over a buffer passed from user space to kernel space
 pub struct UserBuffer {
     /// A list of buffers
