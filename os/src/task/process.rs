@@ -49,6 +49,20 @@ pub struct ProcessControlBlockInner {
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+    /// enable deadlock detection
+    pub deadlock_detection: bool,
+    /// available mutex
+    pub available_mutex: Vec<isize>,
+    /// available semaphore
+    pub available_semaphore: Vec<isize>,
+    /// allocated mutex
+    pub allocated_mutex: Vec<Vec<isize>>,
+    /// allocated semaphore
+    pub allocated_semaphore: Vec<Vec<isize>>,
+    /// mutex needs
+    pub mutex_needs: Vec<Vec<isize>>,
+    /// semaphore needs
+    pub semaphore_needs: Vec<Vec<isize>>,
 }
 
 impl ProcessControlBlockInner {
@@ -119,6 +133,13 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detection: false,
+                    available_mutex: Vec::new(),
+                    available_semaphore: Vec::new(),
+                    allocated_mutex: Vec::new(),
+                    allocated_semaphore: Vec::new(),
+                    mutex_needs: Vec::new(),
+                    semaphore_needs: Vec::new(),
                 })
             },
         });
@@ -144,6 +165,10 @@ impl ProcessControlBlock {
         // add main thread to the process
         let mut process_inner = process.inner_exclusive_access();
         process_inner.tasks.push(Some(Arc::clone(&task)));
+        process_inner.allocated_mutex.push(vec![]);
+        process_inner.allocated_semaphore.push(vec![]);
+        process_inner.mutex_needs.push(vec![]);
+        process_inner.semaphore_needs.push(vec![]);
         drop(process_inner);
         insert_into_pid2process(process.getpid(), Arc::clone(&process));
         // add main thread to scheduler
@@ -245,6 +270,13 @@ impl ProcessControlBlock {
                     mutex_list: Vec::new(),
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
+                    deadlock_detection: false,
+                    available_mutex: Vec::new(),
+                    available_semaphore: Vec::new(),
+                    allocated_mutex: Vec::from(vec![vec![]]),
+                    allocated_semaphore: Vec::from(vec![vec![]]),
+                    mutex_needs: Vec::from(vec![vec![]]),
+                    semaphore_needs: Vec::from(vec![vec![]]),
                 })
             },
         });
